@@ -1,0 +1,53 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Project Folder Structure Guide
+
+This project is a **Tauri** desktop application with a **React (TypeScript)** front-end and a **Rust** back-end. Use this guide to quickly locate the main entry points and important resources.
+
+## Top-Level
+
+| Path | Purpose |
+| --- | --- |
+| [package.json](mdc:package.json) | Node dependencies & scripts (frontend + tauri CLI) |
+| [bun.lock](mdc:bun.lock) | Bun lockfile (JS package manager) |
+| [vite.config.ts](mdc:vite.config.ts) | Vite build/dev configuration for React frontend |
+| [tsconfig.json](mdc:tsconfig.json) | TypeScript compiler options (web) |
+| [README.md](mdc:README.md) | Project overview |
+
+## Front-End (React + Vite)
+
+Directory: [`src/`](mdc:src)
+
+| Path | Purpose |
+| --- | --- |
+| [src/main.tsx](mdc:src/main.tsx) | React entry point; mounts `<App />` into the DOM |
+| [src/App.tsx](mdc:src/App.tsx) | Root React component |
+| [src/App.css](mdc:src/App.css) | Global styles (may be replaced by Tailwind) |
+| [src/assets/](mdc:src/assets) | Static assets (e.g., logos) |
+| [index.html](mdc:index.html) | HTML template loaded by Vite/Tauri |
+
+## Back-End (Tauri + Rust)
+
+Directory: [`src-tauri/`](mdc:src-tauri)
+
+| Path | Purpose |
+| --- | --- |
+| [src-tauri/Cargo.toml](mdc:src-tauri/Cargo.toml) | Rust crate manifest for the Tauri backend |
+| [src-tauri/build.rs](mdc:src-tauri/build.rs) | Build-time configuration for Tauri |
+| [src-tauri/tauri.conf.json](mdc:src-tauri/tauri.conf.json) | Tauri app configuration (window, permissions, etc.) |
+| [src-tauri/src/main.rs](mdc:src-tauri/src/main.rs) | Main binary; initializes Tauri & registers commands |
+| [src-tauri/src/lib.rs](mdc:src-tauri/src/lib.rs) | Optional shared Rust library code |
+| [src-tauri/icons/](mdc:src-tauri/icons) | App icons for various platforms |
+| [src-tauri/capabilities/default.json](mdc:src-tauri/capabilities/default.json) | Default capabilities configuration |
+
+## Public Assets
+
+Directory: [`public/`](mdc:public)
+
+Contains static files copied verbatim into the final bundle (e.g., [tauri.svg](mdc:public/tauri.svg), [vite.svg](mdc:public/vite.svg)).
+
+---
+**Tip:** When adding new Rust commands, place them in `[main.rs](mdc:src-tauri/src/main.rs)` or re-export from `[lib.rs](mdc:src-tauri/src/lib.rs)`. For frontend changes, start from `[App.tsx](mdc:src/App.tsx)`.

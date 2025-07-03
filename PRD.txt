@@ -1,0 +1,164 @@
+Product Requirements Document (PRD)  
+Project Name: “Tracker-Agent” – Employee Desktop Activity Collector (Windows + macOS)
+
+====================================================================
+1  Executive Summary
+--------------------------------------------------------------------
+Tracker-Agent is a lightweight background application—installed only
+on employee machines—that continuously COLLECTS data (screenshots,
+window focus events, active-time blocks) and reliably DELIVERS it to
+disk (and, in v1.1, to an optional upload endpoint). It exposes *no*
+analytics UI; the companion “Manager Console” product will later read
+the stored data.  Primary design goals are accuracy, low resource
+usage, and tamper resistance while remaining transparent to employees.
+
+====================================================================
+2  Goals & Success Metrics
+--------------------------------------------------------------------
+G-1 > Capture a screenshot at the configured interval (5 min default)
+     with ≤ 5 % drift, while CPU < 3 % and RAM < 120 MB (idle).
+G-2 > Log 98 %+ of foreground-window focus events.
+G-3 > Zero data loss after OS crash or unexpected power-off.
+G-4 > Installer ➜ tracker running in < 90 s, no manual config.
+G-5 > Tamper attempts (closing the app, moving DB) recorded to audit
+      table and optionally auto-restart the agent.
+
+====================================================================
+3  Scope
+--------------------------------------------------------------------
+IN SCOPE (v1.0 – “Collector only”)
+• Periodic screenshot capture (1–15 min, per-seat policy file).  
+• Foreground-window event logging (open, close, minimize, focus).  
+• Active-time aggregation per window/app.  
+• Local SQLite data store, file-system hierarchy as below.  
+• Minimal tray-icon UI: status, remaining disk space, “Pause (30 min)”.  
+• Automatic version-update check (local file or HTTPS URL).  
+
+====================================================================
+4  User Personas
+--------------------------------------------------------------------
+• Employee (end-user): The agent should stay unobtrusive, small UI.  
+
+====================================================================
+5  Functional Requirements
+--------------------------------------------------------------------
+FR-1 Installation & Bootstrap  
+  - Silent MSI/PKG with code-signing, single launchd/TaskSchd entry.  
+  - First run creates data directory and SQLite schema (below).  
+
+FR-2 Screenshot Capture  
+  - Config file / registry sets interval, quality, max retention days.  
+  - APIs: Windows GDI/DXGI; macOS CGDisplayStream (prefers HEIC, falls
+    back to PNG).  
+  - Store compressed image on disk; write row to `screenshots` table.  
+  - Skip capture if session locked or display sleep.  
+
+FR-3 Window Event Logger  
+  - Windows: `SetWinEventHook(EVENT_SYSTEM_FOREGROUND …)`  
+  - macOS: `NSWorkspaceDidActivateApplicationNotification` etc.  
+  - Fields: timestamp, app_id (bundle identifier / exe path hash),
+    window_title (UTF-8, truncated 512 chars), event_type.  
+
+FR-4 Focus-Time Aggregator  
+  - Maintains an in-memory “current focus” record; on change or idle
+    timeout (default 3 min) writes completed record to `time_logs`.  
+  - Idle detection via last input timestamp (Win API) / IOKit.  
+
+FR-5 Tamper & Health Monitoring  
+  - Watchdog subprocess restarts agent if killed.  
+  - Writes to `audit_events` table: start, stop, update, crash, user
+    pause, watchdog restart, config change.  
+
+FR-6 Minimal User Interface (Tray)  
+  - Status (Running / Paused) + last sync time.  
+  - “Pause for … ” with policy-controlled max duration.  
+  - “Quit” optionally hidden by policy.  
+
+FR-7 Configuration  
+  - JSON or TOML policy file signed with company cert (optional).  
+  - Hot-reloaded; invalid signature ► ignore & log audit event.  
+
+====================================================================
+6  Database Schema (SQLite)
+--------------------------------------------------------------------
+screenshots(id PK, ts INTEGER, file_path TEXT, screen_id INTEGER)  
+window_activities(id PK, ts INTEGER, event_type TEXT, window_title TEXT,
+                  app_id TEXT, pid INTEGER)  
+time_logs(id PK, app_id TEXT, window_title TEXT,
+          focus_start INTEGER, focus_end INTEGER, duration INTEGER)  
+audit_events(id PK, ts INTEGER, level TEXT, message TEXT)  
+meta(key TEXT PRIMARY KEY, value TEXT) -- version, last_upload, etc.
+
+====================================================================
+7  Technical Architecture
+--------------------------------------------------------------------
+• Framework: Tauri 2.x  
+• Core language: Rust 2021  
+• Crates: tauri, rusqlite, serde, chrono, image, thiserror, anyhow.  
+• Two long-running threads:  
+ 1) `CaptureTimer` – sleeps until next timestamp → screenshot.  
+ 2) `EventHook`    – OS callbacks → channel → DB writer.  
+• IPC: Tauri commands only for tray UI & updater (no analytics).  
+• Data Dir:  
+  macOS  `~/Library/Application Support/TrackerAgent/`  
+  Win    `%PROGRAMDATA%\TrackerAgent\` (shared) or `%APPDATA%` per-user  
+     └── db.sqlite  
+     └── screenshots/YYYY/MM/DD/HHmmss.png  
+     └── logs/agent.log  
+
+====================================================================
+8  Non-Functional Requirements
+--------------------------------------------------------------------
+• Performance:  ≤ 25 ms event→write path; screenshot compression ≤ 150 ms.  
+• Reliability:   Recover after power failure with WAL journal mode.  
+• Security:      Data dir ACL = user + Administrators; code-signed.  
+• Privacy:       No outbound traffic unless `upload_endpoint` enabled.  
+• Resilience:    CRC32 on each screenshot file; mismatch flagged.  
+• Updatability:  Delta-update (zip patch) verified by Ed25519 signature.
+
+====================================================================
+9  Milestones
+--------------------------------------------------------------------
+Phase 1 Project bootstrap, install scripts, DB schema.
+Phase 2 Screenshot engine both OSes, local retention pruning.
+Phase 3 Window hook integration + focus tracker.
+Phase 4 Tray UI, pause logic, configuration loader.
+Phase 5 Audit & watchdog, logging, unit tests, CI build.  
+Phase 6 Code-signing setup, silent installers; internal QA.  
+Phase 7 Release Candidate 1; pilot deploy on 10 mixed machines.
+All done by now.
+
+====================================================================
+10  Risks & Mitigations
+--------------------------------------------------------------------
+• Screenshot permissions (macOS Screen Recording)  
+  → On-first-launch prompt, helper doc for employees.  
+• Antivirus/EDR flagging unknown app  
+  → Early code-signing, submit to Defender/Notarization.  
+• High-frequency disk writes on laptops with small SSDs  
+  → WAL checkpoint & compaction weekly; screenshot retention policy.  
+• Tampering by savvy users  
+  → Watchdog, audit table, optional kernel-level persistence later.
+
+====================================================================
+11  Acceptance Criteria
+--------------------------------------------------------------------
+AC-1 Silent installer completes and agent process running (tasklist / 
+     launchctl).  
+AC-2 After 30 min of mixed app use, `time_logs` total ≈ actual.  
+AC-3 At least six screenshots (5 min interval) exist on disk, file CRC
+     passes.  
+AC-4 Killing the agent results in automatic restart within 10 s and an
+     `audit_events` entry.  
+AC-5 Uninstall removes all executables but leaves data directory unless
+     `--purge` flag supplied.
+
+====================================================================
+12  Future Roadmap (out of scope now)
+--------------------------------------------------------------------
+• Secure upload service (TLS + mutual auth) and resume logic.  
+• Remote policy push / MDM integration.  
+• Linux support (X11 + Wayland).  
+• Additional sensors: USB insert events, network connectivity.  
+
+— End of “Tracker-Agent” PRD —
