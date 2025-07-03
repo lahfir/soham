@@ -31,8 +31,7 @@ impl ScreenshotService {
             .join(Utc::now().format("%Y/%m/%d").to_string());
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{ts}.png"));
-        let dyn_img = image::DynamicImage::ImageRgba8(image.clone());
-        dyn_img.save(&path)?;
+        image.save(&path)?;
         db.insert_screenshot(ts, path.to_string_lossy().as_ref(), screen.display_info.id as i32)?;
         Ok(())
     }
