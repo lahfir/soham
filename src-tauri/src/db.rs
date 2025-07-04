@@ -4,6 +4,7 @@ use directories::ProjectDirs;
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use serde_json;
 
 /// SQLite wrapper handling all persistence
 pub struct Db {
@@ -61,7 +62,33 @@ impl Db {
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS app_lifecycle_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts          INTEGER NOT NULL,
+                app_id      TEXT NOT NULL,
+                event_type  TEXT NOT NULL -- 'open' or 'close'
+            );
+            CREATE TABLE IF NOT EXISTS app_transitions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts          INTEGER NOT NULL,
+                from_app_id TEXT NOT NULL,
+                to_app_id   TEXT NOT NULL,
+                transition_type TEXT NOT NULL -- 'switch' or 'new_open'
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_ts    INTEGER NOT NULL,
+                end_ts      INTEGER
+            );
             DROP TABLE IF EXISTS time_logs;
+            /* Attempt to add session_id columns if they don't exist */
+            PRAGMA foreign_keys = OFF;
+            BEGIN TRANSACTION;
+            ALTER TABLE activity_pulses ADD COLUMN session_id INTEGER;
+            ALTER TABLE app_transitions ADD COLUMN session_id INTEGER;
+            ALTER TABLE window_activities ADD COLUMN session_id INTEGER;
+            COMMIT;
+            PRAGMA foreign_keys = ON;
         "#,
         )?;
         Ok(())
@@ -76,24 +103,28 @@ impl Db {
         Ok(())
     }
 
-    pub fn insert_window_event(
-        &self,
-        ts: i64,
-        event_type: &str,
-        window_title: &str,
-        app_id: &str,
-        pid: i32,
-    ) -> Result<()> {
+    pub fn insert_session(&self, start_ts: i64) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO window_activities(ts, event_type, window_title, app_id, pid) VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![ts, event_type, window_title, app_id, pid],
+            "INSERT INTO sessions(start_ts) VALUES(?1)",
+            params![start_ts],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Updates the end timestamp of a session when it finishes.
+    pub fn end_session(&self, session_id: i64, end_ts: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET end_ts = ?1 WHERE id = ?2",
+            params![end_ts, session_id],
         )?;
         Ok(())
     }
 
     pub fn insert_activity_pulse(
         &self,
+        session_id: i64,
         ts: i64,
         app_id: &str,
         window_title: &str,
@@ -101,8 +132,8 @@ impl Db {
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO activity_pulses(ts, app_id, window_title, duration_s) VALUES(?1, ?2, ?3, ?4)",
-            params![ts, app_id, window_title, duration_s],
+            "INSERT INTO activity_pulses(session_id, ts, app_id, window_title, duration_s) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![session_id, ts, app_id, window_title, duration_s],
         )?;
         Ok(())
     }
@@ -117,38 +148,31 @@ impl Db {
         Ok(())
     }
 
-    pub fn recent_window_activities(&self, limit: i64) -> Result<Vec<WindowActivity>> {
+    pub fn insert_app_transition(&self, session_id: i64, from_app_id: &str, to_app_id: &str, transition_type: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT ts, event_type, window_title, app_id, pid FROM window_activities ORDER BY ts DESC LIMIT ?1",
+        conn.execute(
+            "INSERT INTO app_transitions (session_id, ts, from_app_id, to_app_id, transition_type) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![session_id, Utc::now().timestamp(), from_app_id, to_app_id, transition_type],
         )?;
-        let rows = stmt.query_map(params![limit], |row| {
-            Ok(WindowActivity {
-                ts: row.get(0)?,
-                event_type: row.get(1)?,
-                window_title: row.get(2)?,
-                app_id: row.get(3)?,
-                pid: row.get(4)?,
-            })
-        })?;
-        let mut v = Vec::new();
-        for r in rows {
-            v.push(r?);
-        }
-        Ok(v)
+        Ok(())
     }
 
-    pub fn recent_screenshots(&self, limit: i64) -> Result<Vec<Screenshot>> {
+    pub fn insert_window_activity(&self, session_id: i64, ts: i64, event_type: &str, window_title: &str, app_id: &str, pid: i32) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, ts, file_path, screen_id FROM screenshots ORDER BY ts DESC LIMIT ?1",
+        conn.execute(
+            "INSERT INTO window_activities(session_id, ts, event_type, window_title, app_id, pid) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            params![session_id, ts, event_type, window_title, app_id, pid],
         )?;
+        Ok(())
+    }
+
+    pub fn recent_screenshots(&self, limit: u32) -> Result<Vec<Screenshot>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT path, ts FROM screenshots ORDER BY ts DESC LIMIT ?1")?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok(Screenshot {
-                id: row.get(0)?,
+                path: row.get(0)?,
                 ts: row.get(1)?,
-                file_path: row.get(2)?,
-                screen_id: row.get(3)?,
             })
         })?;
         let mut v = Vec::new();
@@ -158,39 +182,35 @@ impl Db {
         Ok(v)
     }
 
-    pub fn recent_audit_events(&self, limit: i64) -> Result<Vec<AuditEvent>> {
+    pub fn get_app_stats(&self, from: i64, to: i64) -> Result<Vec<AppStats>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, ts, level, message FROM audit_events ORDER BY ts DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit], |row| {
-            Ok(AuditEvent {
-                id: row.get(0)?,
-                ts: row.get(1)?,
-                level: row.get(2)?,
-                message: row.get(3)?,
-            })
-        })?;
-        let mut v = Vec::new();
-        for r in rows {
-            v.push(r?);
-        }
-        Ok(v)
-    }
-
-    pub fn get_app_usage_stats(&self) -> Result<Vec<AppStats>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT app_id, SUM(duration_s) as total_duration
-            FROM activity_pulses 
-            WHERE app_id IS NOT NULL AND app_id != ''
-            GROUP BY app_id 
+           "SELECT
+                p.app_id,
+                SUM(p.duration_s) as total_duration,
+                (
+                    SELECT COUNT(*) FROM app_lifecycle_events ale 
+                    WHERE ale.app_id = p.app_id 
+                    AND ale.event_type = 'app_open' 
+                    AND ale.ts BETWEEN ?1 AND ?2
+                ) as session_count,
+                MAX(p.ts) as last_seen
+            FROM activity_pulses p
+            WHERE p.app_id IS NOT NULL AND p.app_id != '' AND p.ts BETWEEN ?1 AND ?2
+            GROUP BY p.app_id
             ORDER BY total_duration DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map(params![from, to], |row| {
+            let session_count: i64 = row.get(2)?;
+            let total_duration: i64 = row.get(1)?;
+            let avg_duration = if session_count > 0 { total_duration / session_count } else { total_duration };
+
             Ok(AppStats {
                 app_id: row.get(0)?,
-                total_duration: row.get(1)?,
+                total_duration,
+                session_count,
+                avg_duration,
+                last_seen: row.get(3)?,
             })
         })?;
         let mut v = Vec::new();
@@ -200,46 +220,18 @@ impl Db {
         Ok(v)
     }
 
-    pub fn get_daily_usage_stats(&self, days: i64) -> Result<Vec<DailyStats>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT 
-                date(ts, 'unixepoch') as date,
-                SUM(duration_s) as total_duration,
-                COUNT(DISTINCT app_id) as unique_apps,
-                (SELECT COUNT(*) FROM screenshots s WHERE date(s.ts, 'unixepoch') = date(p.ts, 'unixepoch')) as screenshot_count
-            FROM activity_pulses p
-            WHERE ts >= strftime('%s', 'now', '-' || ?1 || ' days')
-            GROUP BY date(ts, 'unixepoch') 
-            ORDER BY date DESC",
-        )?;
-        let rows = stmt.query_map(params![days], |row| {
-            Ok(DailyStats {
-                date: row.get(0)?,
-                total_duration: row.get(1)?,
-                unique_apps: row.get(2)?,
-                screenshot_count: row.get(3)?,
-            })
-        })?;
-        let mut v = Vec::new();
-        for r in rows {
-            v.push(r?);
-        }
-        Ok(v)
-    }
-
-    pub fn get_activity_heatmap(&self, days_ago: i64) -> Result<Vec<ActivityHeatmapData>> {
+    pub fn get_activity_heatmap(&self, from: i64, to: i64) -> Result<Vec<ActivityHeatmapData>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT
-                CAST(strftime('%w', ts, 'unixepoch') AS INTEGER) as day_of_week,
-                CAST(strftime('%H', ts, 'unixepoch') AS INTEGER) as hour_of_day,
+                CAST(strftime('%w', datetime(ts, 'unixepoch')) AS INTEGER) as day_of_week,
+                CAST(strftime('%H', datetime(ts, 'unixepoch')) AS INTEGER) as hour_of_day,
                 SUM(duration_s) as total_duration
             FROM activity_pulses
-            WHERE ts >= strftime('%s', 'now', '-' || ?1 || ' days')
+            WHERE ts BETWEEN ?1 AND ?2
             GROUP BY day_of_week, hour_of_day",
         )?;
-        let rows = stmt.query_map(params![days_ago], |row| {
+        let rows = stmt.query_map(params![from, to], |row| {
             Ok(ActivityHeatmapData {
                 day_of_week: row.get(0)?,
                 hour_of_day: row.get(1)?,
@@ -252,26 +244,169 @@ impl Db {
         }
         Ok(v)
     }
+    
+    pub fn get_activity_heatmap_week(&self, from: i64, to: i64) -> Result<Vec<ActivityHeatmapData>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT
+                CAST(strftime('%w', datetime(ts, 'unixepoch')) AS INTEGER) as day_of_week,
+                CAST(strftime('%H', datetime(ts, 'unixepoch')) AS INTEGER) as hour_of_day,
+                SUM(duration_s) as total_duration
+            FROM activity_pulses
+            WHERE ts BETWEEN ?1 AND ?2
+            GROUP BY day_of_week, hour_of_day",
+        )?;
+        let rows = stmt.query_map(params![from, to], |row| {
+            Ok(ActivityHeatmapData {
+                day_of_week: row.get(0)?,
+                hour_of_day: row.get(1)?,
+                total_duration: row.get(2)?,
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        Ok(v)
+    }
+
+    pub fn get_activity_heatmap_month(&self, from: i64, to: i64) -> Result<Vec<ActivityHeatmapMonthData>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT
+                CAST(strftime('%d', datetime(ts, 'unixepoch')) AS INTEGER) as day_of_month,
+                CAST(strftime('%H', datetime(ts, 'unixepoch')) AS INTEGER) as hour_of_day,
+                SUM(duration_s) as total_duration
+            FROM activity_pulses
+            WHERE ts BETWEEN ?1 AND ?2
+            GROUP BY day_of_month, hour_of_day",
+        )?;
+        let rows = stmt.query_map(params![from, to], |row| {
+            Ok(ActivityHeatmapMonthData {
+                day_of_month: row.get(0)?,
+                hour_of_day: row.get(1)?,
+                total_duration: row.get(2)?,
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        Ok(v)
+    }
+    
+    pub fn get_activity_heatmap_year(&self, from: i64, to: i64) -> Result<Vec<ActivityHeatmapYearData>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT
+                CAST(strftime('%j', datetime(ts, 'unixepoch')) AS INTEGER) as day_of_year,
+                CAST(strftime('%H', datetime(ts, 'unixepoch')) AS INTEGER) as hour_of_day,
+                SUM(duration_s) as total_duration
+            FROM activity_pulses
+            WHERE ts BETWEEN ?1 AND ?2
+            GROUP BY day_of_year, hour_of_day",
+        )?;
+        let rows = stmt.query_map(params![from, to], |row| {
+            Ok(ActivityHeatmapYearData {
+                day_of_year: row.get(0)?,
+                hour_of_day: row.get(1)?,
+                total_duration: row.get(2)?,
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        Ok(v)
+    }
+
+    pub fn get_historical_events(&self, start_ts: i64, end_ts: i64) -> Result<Vec<crate::HistoricalEvent>> {
+        let conn = self.conn.lock().unwrap();
+        // Union of screenshots and app transitions
+        let mut stmt = conn.prepare(
+            "SELECT 'screenshot' as type, s.ts, s.file_path as content, '' as to_app, '' as transition_type
+            FROM screenshots s
+            WHERE s.ts BETWEEN ?1 AND ?2
+            UNION ALL
+            SELECT 'transition' as type, t.ts, t.from_app_id as content, t.to_app_id, t.transition_type
+            FROM app_transitions t
+            WHERE t.ts BETWEEN ?1 AND ?2
+            ORDER BY ts"
+        )?;
+
+        let rows = stmt.query_map(params![start_ts, end_ts], |row| {
+            let details_str: String = row.get(2)?;
+            Ok(crate::HistoricalEvent {
+                ts: row.get(0)?,
+                event_type: row.get(1)?,
+                details: serde_json::from_str(&details_str).unwrap_or(serde_json::Value::Null),
+            })
+        })?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+
+        Ok(events)
+    }
+    
+    pub fn get_app_lifecycle_flow(&self, date: &str) -> Result<Vec<AppLifecycleFlow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT from_app_id, to_app_id, transition_type, strftime('%H:%M:%S', ts, 'unixepoch') as time, ts
+            FROM app_transitions
+            WHERE date(ts, 'unixepoch') = ?1
+            ORDER BY ts",
+        )?;
+        let rows = stmt.query_map(params![date], |row| {
+            Ok(AppLifecycleFlow {
+                from_app: row.get(0)?,
+                to_app: row.get(1)?,
+                transition_type: row.get(2)?,
+                time: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        Ok(v)
+    }
+
+    pub fn get_session_flow(&self, session_id: i64) -> Result<Vec<AppLifecycleFlow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT from_app_id, to_app_id, transition_type, strftime('%H:%M:%S', ts, 'unixepoch') as time, ts
+            FROM app_transitions
+            WHERE session_id = ?1
+            ORDER BY ts",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(AppLifecycleFlow {
+                from_app: row.get(0)?,
+                to_app: row.get(1)?,
+                transition_type: row.get(2)?,
+                time: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        Ok(v)
+    }
 }
 
-#[derive(serde::Serialize, Clone)]
-pub struct WindowActivity {
-    pub ts: i64,
-    pub event_type: String,
-    pub window_title: String,
-    pub app_id: String,
-    pub pid: i32,
-}
-
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize)]
 pub struct Screenshot {
-    pub id: i64,
+    pub path: String,
     pub ts: i64,
-    pub file_path: String,
-    pub screen_id: i32,
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize)]
 pub struct AuditEvent {
     pub id: i64,
     pub ts: i64,
@@ -283,19 +418,43 @@ pub struct AuditEvent {
 pub struct AppStats {
     pub app_id: String,
     pub total_duration: i64,
+    pub session_count: i64,
+    pub avg_duration: i64,
+    pub last_seen: i64,
 }
 
 #[derive(serde::Serialize, Clone)]
-pub struct DailyStats {
-    pub date: String,
-    pub total_duration: i64,
-    pub unique_apps: i64,
-    pub screenshot_count: i64,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
 pub struct ActivityHeatmapData {
     pub day_of_week: i64,
     pub hour_of_day: i64,
     pub total_duration: i64,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct ActivityHeatmapMonthData {
+    pub day_of_month: i64,
+    pub hour_of_day: i64,
+    pub total_duration: i64,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct ActivityHeatmapYearData {
+    pub day_of_year: i64,
+    pub hour_of_day: i64,
+    pub total_duration: i64,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct AppLifecycleFlow {
+    pub from_app: String,
+    pub to_app: String,
+    pub transition_type: String,
+    pub time: String,
+    pub created_at: i64,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct AppUsage {
+    pub app_name: String,
+    pub duration: i64,
 } 

@@ -1,16 +1,14 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
-type Theme = 'dark' | 'light' | 'system'
-
 type ThemeProviderProps = {
     children: React.ReactNode
-    defaultTheme?: Theme
+    defaultTheme?: 'system' | 'light' | 'dark'
     storageKey?: string
 }
 
 type ThemeProviderState = {
-    theme: Theme
-    setTheme: (theme: Theme) => void
+    theme: 'system' | 'light' | 'dark'
+    setTheme: (theme: 'system' | 'light' | 'dark') => void
 }
 
 const initialState: ThemeProviderState = {
@@ -26,8 +24,8 @@ export function ThemeProvider({
     storageKey = 'soham-ui-theme',
     ...props
 }: ThemeProviderProps) {
-    const [theme, setTheme] = useState<Theme>(
-        () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
+    const [theme, setTheme] = useState<'system' | 'light' | 'dark'>(
+        () => (localStorage.getItem(storageKey) as 'system' | 'light' | 'dark') || defaultTheme
     )
 
     useEffect(() => {
@@ -50,7 +48,7 @@ export function ThemeProvider({
 
     const value = {
         theme,
-        setTheme: (theme: Theme) => {
+        setTheme: (theme: 'system' | 'light' | 'dark') => {
             localStorage.setItem(storageKey, theme)
             setTheme(theme)
         },

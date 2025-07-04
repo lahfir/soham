@@ -1,24 +1,22 @@
 #[cfg(target_os = "macos")]
-pub mod macos;
+mod macos;
+#[cfg(target_os = "macos")]
+use self::macos as os;
 
 #[cfg(target_os = "windows")]
-pub mod windows;
+mod windows;
+#[cfg(target_os = "windows")]
+use self::windows as os;
 
-#[cfg(target_os = "linux")]
-pub mod linux;
 
-use anyhow::Result;
-
-/// Gets the application icon as a base64 encoded PNG.
-/// The `app_id` is typically the executable name (e.g., "Code").
-pub fn get_app_icon_base64(app_id: &str) -> Result<String> {
-    #[cfg(target_os = "macos")]
-    {
-        macos::get_icon_for_app(app_id)
+// Placeholder for other OSes
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+mod os {
+    pub fn get_app_icon_base64(_app_id: &str) -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("Icon extraction not supported on this OS"))
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // Placeholder for other platforms
-        anyhow::bail!("Icon extraction not implemented for this platform");
-    }
+}
+
+pub fn get_app_icon_base64(app_id: &str) -> anyhow::Result<String> {
+    os::get_app_icon_base64(app_id)
 } 

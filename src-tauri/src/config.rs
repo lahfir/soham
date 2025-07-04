@@ -1,8 +1,8 @@
 use anyhow::Result;
 use directories::ProjectDirs;
-use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, sync::mpsc::channel};
+use std::{fs, path::PathBuf};
+use toml;
 
 /// Runtime configuration loaded from disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,17 +41,5 @@ impl Config {
         } else {
             Ok(Self::default())
         }
-    }
-
-    pub fn watch<F: Fn() + Send + 'static>(callback: F) -> Result<()> {
-        let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher = Watcher::new(tx, NotifyConfig::default())?;
-        watcher.watch(&Self::path(), RecursiveMode::NonRecursive)?;
-        std::thread::spawn(move || {
-            while rx.recv().is_ok() {
-                callback();
-            }
-        });
-        Ok(())
     }
 } 

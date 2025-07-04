@@ -119,9 +119,6 @@ function Calendar({
           defaultClassNames.disabled
         ),
         hidden: cn("invisible", defaultClassNames.hidden),
-        day_range_middle:
-          "aria-selected:bg-accent aria-selected:text-accent-foreground",
-        day_hidden: "invisible",
         ...classNames,
       }}
       components={{

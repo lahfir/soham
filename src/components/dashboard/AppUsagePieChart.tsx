@@ -1,25 +1,90 @@
-import React from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { RealtimeData } from '@/hooks/useRealtime';
-import { PieChart as PieChartIcon } from 'lucide-react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { AppStat } from '@/types/dashboard';
+import { AppIcon } from './AppIcon';
 
 interface AppUsagePieChartProps {
-    data: RealtimeData | null;
+    data: AppStat[];
 }
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#AF19FF', '#FF1919'];
+interface PieChartData {
+    name: string;
+    value: number;
+    originalApp?: AppStat;
+    color: string;
+    percentage: number;
+}
+
+function formatDuration(seconds: number): string {
+    if (seconds < 60) return `${Math.floor(seconds)}s`;
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
+
+
+function generateAppColor(appName: string): string {
+    const colors = [
+        '#007AFF', '#5856D6', '#AF52DE', '#FF2D92', '#FF3B30',
+        '#FF9500', '#FFCC00', '#34C759', '#00C7BE', '#5AC8FA'
+    ];
+
+    let hash = 0;
+    for (let i = 0; i < appName.length; i++) {
+        const char = appName.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+
+    const index = Math.abs(hash) % colors.length;
+    return colors[index];
+}
 
 const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
-        const data = payload[0].payload;
-        const hours = Math.floor(data.value / 3600);
-        const minutes = Math.floor((data.value % 3600) / 60);
+        const data = payload[0].payload as PieChartData;
+        const originalApp = data.originalApp;
+
         return (
-            <div className="p-2 text-sm bg-background/80 backdrop-blur-sm border rounded-lg shadow-lg">
-                <p className="font-bold">{data.name}</p>
-                <p className="text-muted-foreground">{`Time: ${hours}h ${minutes}m`}</p>
-                <p className="text-primary">{`(${(payload[0].percent * 100).toFixed(0)}%)`}</p>
+            <div className="bg-background/95 backdrop-blur-xl border border-border/50 rounded-xl shadow-2xl p-3 min-w-[200px] max-w-[250px]">
+                <div className="flex items-center gap-2 mb-2">
+                    <AppIcon appId={data.name} className="h-6 w-6 rounded-md shadow-sm" />
+                    <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm text-foreground truncate">{data.name}</p>
+                        <p className="text-xs text-muted-foreground">{data.percentage.toFixed(1)}% of total</p>
+                    </div>
+                </div>
+
+                <div className="space-y-1.5">
+                    <div className="flex justify-between items-center">
+                        <span className="text-xs text-muted-foreground">Duration</span>
+                        <span className="text-xs font-medium">{formatDuration(data.value)}</span>
+                    </div>
+
+                    {originalApp && (
+                        <>
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs text-muted-foreground">Sessions</span>
+                                <span className="text-xs font-medium">{originalApp.session_count || 0}</span>
+                            </div>
+
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs text-muted-foreground">Avg Session</span>
+                                <span className="text-xs font-medium">
+                                    {formatDuration(originalApp.session_count > 0 ? originalApp.total_duration / originalApp.session_count : originalApp.total_duration)}
+                                </span>
+                            </div>
+
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs text-muted-foreground">Last Seen</span>
+                                <span className="text-xs font-medium">
+                                    {new Date(originalApp.last_seen * 1000).toLocaleDateString()}
+                                </span>
+                            </div>
+                        </>
+                    )}
+                </div>
             </div>
         );
     }
@@ -27,63 +92,69 @@ const CustomTooltip = ({ active, payload }: any) => {
 };
 
 export function AppUsagePieChart({ data }: AppUsagePieChartProps) {
-    if (!data || !data.app_stats || data.app_stats.length === 0) {
+    if (!data || data.length === 0) {
         return (
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <PieChartIcon className="h-5 w-5" />
-                        App Distribution
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="flex items-center justify-center h-64">
-                    <p className="text-muted-foreground">No app usage data available.</p>
-                </CardContent>
-            </Card>
+            <div className="flex items-center justify-center h-64 text-center">
+                <div className="space-y-2">
+                    <div className="w-12 h-12 bg-muted/20 rounded-full flex items-center justify-center mx-auto">
+                        <AppIcon appId="unknown" className="h-6 w-6 opacity-40" />
+                    </div>
+                    <div>
+                        <p className="text-sm font-medium text-muted-foreground">No usage data</p>
+                        <p className="text-xs text-muted-foreground/70">Activity will appear here</p>
+                    </div>
+                </div>
+            </div>
         );
     }
 
-    const pieData = data.app_stats.slice(0, 5).map(app => ({
+    // Calculate total duration for percentage calculations
+    const totalDuration = data.reduce((sum, app) => sum + app.total_duration, 0);
+
+    const pieData: PieChartData[] = data.slice(0, 8).map(app => ({
         name: app.app_id,
         value: app.total_duration,
+        originalApp: app,
+        color: generateAppColor(app.app_id),
+        percentage: totalDuration > 0 ? (app.total_duration / totalDuration) * 100 : 0
     }));
 
-    // If there are more than 5 apps, group the rest into "Other"
-    if (data.app_stats.length > 5) {
-        const otherDuration = data.app_stats.slice(5).reduce((acc, app) => acc + app.total_duration, 0);
-        pieData.push({ name: 'Other', value: otherDuration });
+    if (data.length > 8) {
+        const otherDuration = data.slice(8).reduce((acc, app) => acc + app.total_duration, 0);
+        const otherPercentage = totalDuration > 0 ? (otherDuration / totalDuration) * 100 : 0;
+        pieData.push({
+            name: 'Other',
+            value: otherDuration,
+            color: '#8E8E93',
+            percentage: otherPercentage
+        } as PieChartData);
     }
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                    <PieChartIcon className="h-5 w-5" />
-                    App Distribution
-                </CardTitle>
-            </CardHeader>
-            <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                        <Pie
-                            data={pieData}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            outerRadius={80}
-                            fill="#8884d8"
-                            dataKey="value"
-                            isAnimationActive={false}
-                        >
-                            {pieData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                        </Pie>
-                        <Tooltip content={<CustomTooltip />} />
-                        <Legend iconSize={10} />
-                    </PieChart>
-                </ResponsiveContainer>
-            </CardContent>
-        </Card>
+        <div className="w-full h-64">
+            <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                    <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={100}
+                        paddingAngle={1}
+                        dataKey="value"
+                        stroke="none"
+                    >
+                        {pieData.map((entry, index) => (
+                            <Cell
+                                key={`cell-${index}`}
+                                fill={entry.color}
+                                className="hover:opacity-80 transition-opacity duration-200 cursor-pointer"
+                            />
+                        ))}
+                    </Pie>
+                    <Tooltip content={<CustomTooltip />} />
+                </PieChart>
+            </ResponsiveContainer>
+        </div>
     );
 } 

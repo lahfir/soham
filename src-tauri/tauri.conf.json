@@ -4,17 +4,19 @@
   "version": "0.1.0",
   "identifier": "com.soham.ai",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
+        "fullscreen": false,
+        "height": 600,
+        "resizable": true,
         "title": "soham",
-        "width": 800,
-        "height": 600
+        "width": 800
       }
     ],
     "security": {

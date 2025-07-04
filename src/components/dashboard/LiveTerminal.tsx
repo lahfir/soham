@@ -1,23 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 import { listen } from '@tauri-apps/api/event';
-import { X } from 'lucide-react';
+import { ActivityPayload } from '@/types/dashboard';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
-interface ActivityPayload {
-    app: string;
-    window_title: string;
-}
+import { format } from 'date-fns';
 
-interface LiveTerminalProps {
-    onClose: () => void;
-}
+export function LiveTerminal() {
+    const [events, setEvents] = useState<ActivityPayload[]>([]);
 
-export function LiveTerminal({ onClose }: LiveTerminalProps) {
-    const [activities, setActivities] = useState<ActivityPayload[]>([]);
-    const terminalBodyRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const unlistenPromise = listen<ActivityPayload>('new-activity', (event) => {
-            setActivities(prev => [event.payload, ...prev.slice(0, 99)]);
+            setEvents((prevEvents) => [event.payload, ...prevEvents].slice(0, 100));
         });
 
         return () => {
@@ -25,49 +20,31 @@ export function LiveTerminal({ onClose }: LiveTerminalProps) {
         };
     }, []);
 
-    useEffect(() => {
-        // Scroll to bottom when new activity comes in
-        if (terminalBodyRef.current) {
-            terminalBodyRef.current.scrollTop = 0;
-        }
-    }, [activities]);
-
-    const formatTime = () => new Date().toLocaleTimeString();
-
     return (
-        <div className="fixed bottom-4 right-4 w-[600px] h-[400px] z-50">
-            <div className="flex flex-col h-full bg-black/80 backdrop-blur-md rounded-lg shadow-2xl border border-primary/20 font-mono text-sm">
-                {/* Terminal Header */}
-                <div className="flex items-center justify-between bg-white/5 px-3 py-2 rounded-t-lg">
-                    <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-red-500 rounded-full" />
-                        <div className="w-3 h-3 bg-yellow-500 rounded-full" />
-                        <div className="w-3 h-3 bg-green-500 rounded-full" />
-                    </div>
-                    <span className="text-green-400">/dev/live_feed</span>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white">
-                        <X size={16} />
-                    </button>
-                </div>
-                {/* Terminal Body */}
-                <div ref={terminalBodyRef} className="flex-1 p-3 overflow-y-auto">
-                    <div className="space-y-1">
-                        {activities.map((act, index) => (
-                            <div key={index} className="flex">
-                                <span className="text-primary/60 mr-2">{formatTime()}</span>
-                                <span className="text-green-400 mr-2">{act.app}</span>
-                                <span className="text-gray-400 truncate">{act.window_title}</span>
-                            </div>
+        <div className="p-8 h-full flex flex-col">
+            <div className="flex items-center justify-between space-y-2 mb-4">
+                <h2 className="text-3xl font-bold tracking-tight">Live View</h2>
+            </div>
+            <div className="flex-grow bg-black/80 rounded-lg shadow-inner overflow-hidden">
+                <ScrollArea className="h-full">
+                    <div className="p-4 font-mono text-sm text-white">
+                        {events.map((event, index) => (
+                            <motion.div
+                                key={index}
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ duration: 0.3 }}
+                                className="flex items-start"
+                            >
+                                <span className="text-green-400 mr-4">
+                                    {format(new Date(event.ts * 1000), 'HH:mm:ss.SSS')}
+                                </span>
+                                <span className="text-cyan-400 mr-4 w-1/4 truncate">{event.app}</span>
+                                <span className="text-gray-300 flex-1 truncate">{event.window_title}</span>
+                            </motion.div>
                         ))}
                     </div>
-                </div>
-                {/* Terminal Prompt */}
-                <div className="p-3 border-t border-white/5">
-                    <div className="flex items-center">
-                        <span className="text-green-400 mr-2">{'>'}</span>
-                        <span className="bg-green-400 w-2 h-4 animate-pulse" />
-                    </div>
-                </div>
+                </ScrollArea>
             </div>
         </div>
     );
