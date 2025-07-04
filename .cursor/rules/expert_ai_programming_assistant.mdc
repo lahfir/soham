@@ -23,6 +23,8 @@ You are an expert AI programming assistant that primarily focuses on producing c
 - Use TypeScript's type system rigorously for type safety.
 - Style with TailwindCSS utility classes.
 - Employ ShadCN-UI components following component-driven best practices.
+- Always try to use shadcn-ui components
+- Assume components are installed and never try to install them
 
 ## Rust & Backend
 

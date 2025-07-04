@@ -44,13 +44,12 @@ impl Db {
                 app_id      TEXT,
                 pid         INTEGER
             );
-            CREATE TABLE IF NOT EXISTS time_logs (
+            CREATE TABLE IF NOT EXISTS activity_pulses (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts          INTEGER NOT NULL,
                 app_id      TEXT,
                 window_title TEXT,
-                focus_start INTEGER,
-                focus_end   INTEGER,
-                duration    INTEGER
+                duration_s  INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS audit_events (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +61,7 @@ impl Db {
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
+            DROP TABLE IF EXISTS time_logs;
         "#,
         )?;
         Ok(())
@@ -92,18 +92,17 @@ impl Db {
         Ok(())
     }
 
-    pub fn insert_time_log(
+    pub fn insert_activity_pulse(
         &self,
+        ts: i64,
         app_id: &str,
         window_title: &str,
-        focus_start: i64,
-        focus_end: i64,
-        duration: i64,
+        duration_s: i64,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO time_logs(app_id, window_title, focus_start, focus_end, duration) VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![app_id, window_title, focus_start, focus_end, duration],
+            "INSERT INTO activity_pulses(ts, app_id, window_title, duration_s) VALUES(?1, ?2, ?3, ?4)",
+            params![ts, app_id, window_title, duration_s],
         )?;
         Ok(())
     }
@@ -159,28 +158,6 @@ impl Db {
         Ok(v)
     }
 
-    pub fn recent_time_logs(&self, limit: i64) -> Result<Vec<TimeLog>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, app_id, window_title, focus_start, focus_end, duration FROM time_logs ORDER BY focus_start DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit], |row| {
-            Ok(TimeLog {
-                id: row.get(0)?,
-                app_id: row.get(1)?,
-                window_title: row.get(2)?,
-                focus_start: row.get(3)?,
-                focus_end: row.get(4)?,
-                duration: row.get(5)?,
-            })
-        })?;
-        let mut v = Vec::new();
-        for r in rows {
-            v.push(r?);
-        }
-        Ok(v)
-    }
-
     pub fn recent_audit_events(&self, limit: i64) -> Result<Vec<AuditEvent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -204,14 +181,16 @@ impl Db {
     pub fn get_app_usage_stats(&self) -> Result<Vec<AppStats>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT app_id, SUM(duration) as total_duration, COUNT(*) as session_count, AVG(duration) as avg_session_duration FROM time_logs GROUP BY app_id ORDER BY total_duration DESC",
+            "SELECT app_id, SUM(duration_s) as total_duration
+            FROM activity_pulses 
+            WHERE app_id IS NOT NULL AND app_id != ''
+            GROUP BY app_id 
+            ORDER BY total_duration DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(AppStats {
                 app_id: row.get(0)?,
                 total_duration: row.get(1)?,
-                session_count: row.get(2)?,
-                avg_session_duration: row.get(3)?,
             })
         })?;
         let mut v = Vec::new();
@@ -225,13 +204,13 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT 
-                date(focus_start, 'unixepoch') as date,
-                SUM(duration) as total_duration,
+                date(ts, 'unixepoch') as date,
+                SUM(duration_s) as total_duration,
                 COUNT(DISTINCT app_id) as unique_apps,
-                (SELECT COUNT(*) FROM screenshots WHERE date(ts, 'unixepoch') = date(focus_start, 'unixepoch')) as screenshot_count
-            FROM time_logs 
-            WHERE focus_start >= strftime('%s', 'now', '-' || ?1 || ' days')
-            GROUP BY date(focus_start, 'unixepoch') 
+                (SELECT COUNT(*) FROM screenshots s WHERE date(s.ts, 'unixepoch') = date(p.ts, 'unixepoch')) as screenshot_count
+            FROM activity_pulses p
+            WHERE ts >= strftime('%s', 'now', '-' || ?1 || ' days')
+            GROUP BY date(ts, 'unixepoch') 
             ORDER BY date DESC",
         )?;
         let rows = stmt.query_map(params![days], |row| {
@@ -249,93 +228,33 @@ impl Db {
         Ok(v)
     }
 
-    pub fn get_stats_by_date(&self, date: &str) -> Result<serde_json::Value> {
+    pub fn get_activity_heatmap(&self, days_ago: i64) -> Result<Vec<ActivityHeatmapData>> {
         let conn = self.conn.lock().unwrap();
-        
-        let mut app_stats_stmt = conn.prepare(
-            "SELECT app_id, SUM(duration) as total_duration, COUNT(*) as session_count, AVG(duration) as avg_session_duration 
-             FROM time_logs 
-             WHERE date(focus_start, 'unixepoch') = ?1 
-             GROUP BY app_id 
-             ORDER BY total_duration DESC"
+        let mut stmt = conn.prepare(
+            "SELECT
+                CAST(strftime('%w', ts, 'unixepoch') AS INTEGER) as day_of_week,
+                CAST(strftime('%H', ts, 'unixepoch') AS INTEGER) as hour_of_day,
+                SUM(duration_s) as total_duration
+            FROM activity_pulses
+            WHERE ts >= strftime('%s', 'now', '-' || ?1 || ' days')
+            GROUP BY day_of_week, hour_of_day",
         )?;
-        
-        let app_stats_rows = app_stats_stmt.query_map(params![date], |row| {
-            Ok(serde_json::json!({
-                "app_id": row.get::<_, String>(0)?,
-                "total_duration": row.get::<_, i64>(1)?,
-                "session_count": row.get::<_, i64>(2)?,
-                "avg_session_duration": row.get::<_, i64>(3)?
-            }))
+        let rows = stmt.query_map(params![days_ago], |row| {
+            Ok(ActivityHeatmapData {
+                day_of_week: row.get(0)?,
+                hour_of_day: row.get(1)?,
+                total_duration: row.get(2)?,
+            })
         })?;
-        
-        let mut app_stats = Vec::new();
-        for row in app_stats_rows {
-            app_stats.push(row?);
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
         }
-        
-        let mut activities_stmt = conn.prepare(
-            "SELECT ts, event_type, window_title, app_id, pid 
-             FROM window_activities 
-             WHERE date(ts, 'unixepoch') = ?1 
-             ORDER BY ts DESC"
-        )?;
-        
-        let activities_rows = activities_stmt.query_map(params![date], |row| {
-            Ok(serde_json::json!({
-                "ts": row.get::<_, i64>(0)?,
-                "event_type": row.get::<_, String>(1)?,
-                "window_title": row.get::<_, String>(2)?,
-                "app_id": row.get::<_, String>(3)?,
-                "pid": row.get::<_, i32>(4)?
-            }))
-        })?;
-        
-        let mut activities = Vec::new();
-        for row in activities_rows {
-            activities.push(row?);
-        }
-        
-        let mut screenshots_stmt = conn.prepare(
-            "SELECT id, ts, file_path, screen_id 
-             FROM screenshots 
-             WHERE date(ts, 'unixepoch') = ?1 
-             ORDER BY ts DESC"
-        )?;
-        
-        let screenshots_rows = screenshots_stmt.query_map(params![date], |row| {
-            Ok(serde_json::json!({
-                "id": row.get::<_, i64>(0)?,
-                "ts": row.get::<_, i64>(1)?,
-                "file_path": row.get::<_, String>(2)?,
-                "screen_id": row.get::<_, i32>(3)?
-            }))
-        })?;
-        
-        let mut screenshots = Vec::new();
-        for row in screenshots_rows {
-            screenshots.push(row?);
-        }
-        
-        Ok(serde_json::json!({
-            "app_stats": app_stats,
-            "activities": activities,
-            "screenshots": screenshots,
-            "date": date
-        }))
-    }
-
-    pub fn get_app_metadata(&self, app_id: &str) -> Result<serde_json::Value> {
-        Ok(serde_json::json!({
-            "app_id": app_id,
-            "icon": format!("/icons/{}.png", app_id.to_lowercase()),
-            "display_name": app_id,
-            "category": "productivity"
-        }))
+        Ok(v)
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct WindowActivity {
     pub ts: i64,
     pub event_type: String,
@@ -344,7 +263,7 @@ pub struct WindowActivity {
     pub pid: i32,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct Screenshot {
     pub id: i64,
     pub ts: i64,
@@ -352,17 +271,7 @@ pub struct Screenshot {
     pub screen_id: i32,
 }
 
-#[derive(serde::Serialize)]
-pub struct TimeLog {
-    pub id: i64,
-    pub app_id: String,
-    pub window_title: String,
-    pub focus_start: i64,
-    pub focus_end: i64,
-    pub duration: i64,
-}
-
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct AuditEvent {
     pub id: i64,
     pub ts: i64,
@@ -370,18 +279,23 @@ pub struct AuditEvent {
     pub message: String,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct AppStats {
     pub app_id: String,
     pub total_duration: i64,
-    pub session_count: i64,
-    pub avg_session_duration: i64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct DailyStats {
     pub date: String,
     pub total_duration: i64,
     pub unique_apps: i64,
     pub screenshot_count: i64,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct ActivityHeatmapData {
+    pub day_of_week: i64,
+    pub hour_of_day: i64,
+    pub total_duration: i64,
 } 

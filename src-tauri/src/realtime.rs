@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::async_runtime::spawn;
 use tokio::time::interval;
 use tauri::{AppHandle, Emitter};
 use serde_json::json;
@@ -9,7 +10,7 @@ pub struct RealtimeService;
 
 impl RealtimeService {
     pub fn spawn(db: Arc<Db>, app_handle: AppHandle) {
-        tokio::spawn(async move {
+        spawn(async move {
             let mut interval = interval(Duration::from_secs(2));
             
             loop {

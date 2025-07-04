@@ -6,21 +6,22 @@ use serde_json::json;
 mod config;
 mod db;
 mod events;
-mod focus;
+mod activity_poller;
 mod screenshot;
 mod state;
 mod watchdog;
 mod realtime;
+mod icon_extractor;
 
 use config::Config;
 use db::Db;
 use events::EventPoller;
-use focus::FocusTracker;
+use activity_poller::ActivityPoller;
 use screenshot::ScreenshotService;
 use state::AppState;
 use watchdog::Watchdog;
 use realtime::RealtimeService;
-use db::{WindowActivity, Screenshot, TimeLog, AuditEvent, AppStats, DailyStats};
+use db::{WindowActivity, Screenshot, AuditEvent, AppStats, DailyStats, ActivityHeatmapData};
 
 #[tauri::command]
 fn pause(app_state: State<AppState>) {
@@ -64,14 +65,6 @@ fn get_screenshots(app_state: State<AppState>, limit: usize) -> Vec<Screenshot> 
 }
 
 #[tauri::command]
-fn get_time_logs(app_state: State<AppState>, limit: usize) -> Vec<TimeLog> {
-    app_state
-        .db
-        .recent_time_logs(limit as i64)
-        .unwrap_or_default()
-}
-
-#[tauri::command]
 fn get_audit_events(app_state: State<AppState>, limit: usize) -> Vec<AuditEvent> {
     app_state
         .db
@@ -96,16 +89,14 @@ fn get_daily_stats(app_state: State<AppState>, days: usize) -> Vec<DailyStats> {
 }
 
 #[tauri::command]
-fn get_stats_by_date(app_state: State<AppState>, date: String) -> serde_json::Value {
-    let daily_stats = app_state
-        .db
-        .get_stats_by_date(&date)
-        .unwrap_or_default();
-    
-    json!({
-        "date": date,
-        "stats": daily_stats
-    })
+fn get_app_icon(app_id: String) -> Result<String, String> {
+    icon_extractor::get_app_icon_base64(&app_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_activity_heatmap_data(app_state: State<AppState>) -> Vec<ActivityHeatmapData> {
+    app_state.db.get_activity_heatmap(28).unwrap_or_default()
 }
 
 #[tauri::command]
@@ -128,8 +119,8 @@ fn get_realtime_dashboard_data(app_state: State<AppState>) -> serde_json::Value 
 
 #[tauri::command]
 fn start_realtime_updates(app_handle: AppHandle) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             interval.tick().await;
             let _ = app_handle.emit("realtime-update", json!({
@@ -146,8 +137,7 @@ pub fn run() {
     let app_state = AppState::new(Arc::clone(&db), config.clone());
 
     ScreenshotService::spawn(Arc::clone(&db), config.clone());
-    EventPoller::spawn(Arc::clone(&db));
-    FocusTracker::spawn(Arc::clone(&db));
+    ActivityPoller::spawn(app_state.clone());
     Watchdog::spawn(Arc::clone(&db));
 
     Builder::default()
@@ -158,16 +148,17 @@ pub fn run() {
             status, 
             get_logs,
             get_screenshots,
-            get_time_logs,
             get_audit_events,
             get_app_stats,
             get_daily_stats,
-            get_stats_by_date,
+            get_app_icon,
+            get_activity_heatmap_data,
             get_realtime_dashboard_data,
             start_realtime_updates
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
+            EventPoller::spawn(Arc::clone(&db), app_handle.clone());
             RealtimeService::spawn(Arc::clone(&db), app_handle.clone());
             Ok(())
         })

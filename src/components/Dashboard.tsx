@@ -1,19 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState } from 'react';
 import { useRealtime } from '@/hooks/useRealtime';
 import { useTheme } from '@/lib/theme-provider';
 import { invoke } from '@tauri-apps/api/core';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuTrigger
+    DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-
 import {
     Monitor,
     Play,
@@ -21,330 +18,122 @@ import {
     Sun,
     Moon,
     Settings,
-    Activity,
-    BarChart3,
-    Camera,
-    Zap,
-    Clock,
-    Users,
     AlertCircle,
-    TrendingUp,
-    Eye,
-    Calendar,
-    Filter,
     Sparkles,
-    Layers,
-    Command
+    Terminal,
 } from 'lucide-react';
 
 import { Overview } from './dashboard/Overview';
 import { TimeTracking } from './dashboard/TimeTracking';
-import { ActivityFeed } from './dashboard/ActivityFeed';
 import { Screenshots } from './dashboard/Screenshots';
-
-const containerVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-        opacity: 1,
-        y: 0,
-        transition: {
-            duration: 0.6,
-            staggerChildren: 0.1
-        }
-    }
-};
-
-const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-        opacity: 1,
-        y: 0,
-        transition: { duration: 0.4 }
-    }
-};
+import { AppUsagePieChart } from './dashboard/AppUsagePieChart';
+import { ActivityHeatmap } from './dashboard/ActivityHeatmap';
+import { LiveTerminal } from './dashboard/LiveTerminal';
 
 export function Dashboard() {
     const { data, isLoading, error } = useRealtime();
     const { theme, setTheme } = useTheme();
     const [isPaused, setIsPaused] = useState(false);
-    const [currentTime, setCurrentTime] = useState(new Date());
-    const [activeTab, setActiveTab] = useState('overview');
-
-    useEffect(() => {
-        const timer = setInterval(() => {
-            setCurrentTime(new Date());
-        }, 1000);
-        return () => clearInterval(timer);
-    }, []);
+    const [isTerminalOpen, setIsTerminalOpen] = useState(false);
 
     const handleToggleTracking = async () => {
         try {
-            if (isPaused) {
-                await invoke('resume');
-                setIsPaused(false);
-            } else {
-                await invoke('pause');
-                setIsPaused(true);
-            }
+            await invoke(isPaused ? 'resume' : 'pause');
+            setIsPaused(!isPaused);
         } catch (error) {
             console.error('Failed to toggle tracking:', error);
         }
     };
 
-    const toggleTheme = () => {
-        setTheme(theme === 'dark' ? 'light' : 'dark');
-    };
-
     if (isLoading) {
         return (
-            <div className="min-h-screen bg-background flex items-center justify-center">
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.5 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.5 }}
-                    className="text-center"
-                >
-                    <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                        className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full mx-auto mb-4"
-                    />
-                    <p className="text-xl font-semibold text-muted-foreground">
-                        Loading Dashboard...
-                    </p>
-                </motion.div>
+            <div className="flex h-screen w-screen items-center justify-center bg-background">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
+                    <p className="text-muted-foreground">Loading Dashboard...</p>
+                </div>
             </div>
         );
     }
 
     if (error) {
         return (
-            <div className="min-h-screen bg-background flex items-center justify-center">
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="text-center"
-                >
-                    <AlertCircle className="w-16 h-16 text-destructive mx-auto mb-4" />
-                    <p className="text-xl font-semibold text-destructive mb-2">
-                        Failed to load dashboard
-                    </p>
-                    <p className="text-muted-foreground">{error}</p>
-                </motion.div>
+            <div className="flex h-screen w-screen items-center justify-center bg-background text-destructive">
+                <div className="flex flex-col items-center gap-2">
+                    <AlertCircle className="h-12 w-12" />
+                    <p className="font-semibold">Failed to load dashboard</p>
+                    <p className="text-sm text-muted-foreground">{error}</p>
+                </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
-            <motion.div
-                initial="hidden"
-                animate="visible"
-                variants={containerVariants}
-                className="relative"
-            >
-                {/* Header */}
-                <motion.div
-                    variants={itemVariants}
-                    className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur-sm"
-                >
-                    <div className="flex h-16 items-center justify-between px-6">
-                        <div className="flex items-center space-x-4">
-                            <motion.div
-                                className="flex items-center space-x-2"
-                                whileHover={{ scale: 1.05 }}
-                            >
-                                <motion.div
-                                    animate={isPaused ? { scale: [1, 1.1, 1] } : {}}
-                                    transition={{ duration: 2, repeat: Infinity }}
-                                    className="relative"
-                                >
-                                    <Monitor className="h-8 w-8 text-primary" />
-                                    <motion.div
-                                        className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full"
-                                        animate={{ scale: [1, 1.2, 1] }}
-                                        transition={{ duration: 2, repeat: Infinity }}
-                                    />
-                                </motion.div>
-                                <div>
-                                    <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-                                        Soham Tracker
-                                    </h1>
-                                    <p className="text-xs text-muted-foreground">
-                                        {currentTime.toLocaleTimeString()}
-                                    </p>
-                                </div>
-                            </motion.div>
-
-                            <motion.div
-                                initial={{ opacity: 0, x: -20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.2 }}
-                            >
-                                <Badge
-                                    variant="outline"
-                                    className="text-xs bg-gradient-to-r from-primary/10 to-primary/5 border-primary/20"
-                                >
-                                    <Sparkles className="w-3 h-3 mr-1" />
-                                    AI-Powered Real-time Tracking
-                                </Badge>
-                            </motion.div>
+        <div className="flex h-screen w-screen bg-muted/40">
+            <div className="flex flex-1 flex-col">
+                <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b bg-background px-6">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <Monitor className="h-7 w-7 text-primary" />
+                            <h1 className="text-xl font-bold">Soham Tracker</h1>
                         </div>
-
-                        <div className="flex items-center space-x-3">
-                            <motion.div
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                            >
-                                <Button
-                                    variant={isPaused ? "default" : "outline"}
-                                    size="sm"
-                                    onClick={handleToggleTracking}
-                                    className="flex items-center gap-2 relative overflow-hidden"
-                                >
-                                    <motion.div
-                                        initial={false}
-                                        animate={isPaused ? { rotate: 0 } : { rotate: 360 }}
-                                        transition={{ duration: 0.3 }}
-                                    >
-                                        {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                                    </motion.div>
-                                    {isPaused ? 'Resume' : 'Pause'}
-                                    {!isPaused && (
-                                        <motion.div
-                                            className="absolute inset-0 bg-gradient-to-r from-green-500/20 to-green-600/20"
-                                            animate={{ opacity: [0.5, 0.8, 0.5] }}
-                                            transition={{ duration: 2, repeat: Infinity }}
-                                        />
-                                    )}
-                                </Button>
-                            </motion.div>
-
-                            <motion.div
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                            >
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={toggleTheme}
-                                    className="relative overflow-hidden"
-                                >
-                                    <motion.div
-                                        initial={false}
-                                        animate={{ rotate: theme === 'dark' ? 180 : 0 }}
-                                        transition={{ duration: 0.3 }}
-                                    >
-                                        {theme === 'dark' ? (
-                                            <Sun className="h-4 w-4" />
-                                        ) : (
-                                            <Moon className="h-4 w-4" />
-                                        )}
-                                    </motion.div>
-                                </Button>
-                            </motion.div>
-
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <motion.div
-                                        whileHover={{ scale: 1.05 }}
-                                        whileTap={{ scale: 0.95 }}
-                                    >
-                                        <Button variant="ghost" size="sm">
-                                            <Settings className="h-4 w-4" />
-                                        </Button>
-                                    </motion.div>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuItem>
-                                        <Command className="h-4 w-4 mr-2" />
-                                        Preferences
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem>
-                                        <Filter className="h-4 w-4 mr-2" />
-                                        Filter Data
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem>
-                                        <Calendar className="h-4 w-4 mr-2" />
-                                        Export Data
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
-                        </div>
+                        <Badge variant="outline" className="hidden sm:flex items-center gap-1.5">
+                            <Sparkles className="h-3 w-3 text-primary" />
+                            AI-Powered Real-time Tracking
+                        </Badge>
                     </div>
-                </motion.div>
-
-                {/* Main Content */}
-                <motion.div
-                    variants={itemVariants}
-                    className="flex-1 p-6 space-y-6"
-                >
-                    <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.3 }}
+                    <div className="flex items-center gap-3">
+                        <Button
+                            variant={isPaused ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={handleToggleTracking}
+                            className="w-24"
                         >
-                            <TabsList className="grid w-full grid-cols-4 bg-muted/50 backdrop-blur-sm">
-                                <TabsTrigger
-                                    value="overview"
-                                    className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm"
-                                >
-                                    <Eye className="h-4 w-4" />
-                                    Overview
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="time-tracking"
-                                    className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm"
-                                >
-                                    <BarChart3 className="h-4 w-4" />
-                                    Analytics
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="activity"
-                                    className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm"
-                                >
-                                    <Activity className="h-4 w-4" />
-                                    Activity Feed
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="screenshots"
-                                    className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm"
-                                >
-                                    <Camera className="h-4 w-4" />
-                                    Screenshots
-                                </TabsTrigger>
-                            </TabsList>
-                        </motion.div>
+                            {isPaused ? <Play className="mr-2 h-4 w-4" /> : <Pause className="mr-2 h-4 w-4" />}
+                            {isPaused ? 'Resume' : 'Pause'}
+                        </Button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="icon">
+                                    <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                                    <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                                    <span className="sr-only">Toggle theme</span>
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => setTheme('light')}>Light</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setTheme('dark')}>Dark</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setTheme('system')}>System</DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                        <Button variant="outline" size="icon">
+                            <Settings className="h-5 w-5" />
+                            <span className="sr-only">Settings</span>
+                        </Button>
+                        <Button variant="outline" size="icon" onClick={() => setIsTerminalOpen(prev => !prev)}>
+                            <Terminal className="h-5 w-5" />
+                            <span className="sr-only">Toggle Terminal</span>
+                        </Button>
+                    </div>
+                </header>
 
-                        <AnimatePresence mode="wait">
-                            <motion.div
-                                key={activeTab}
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -20 }}
-                                transition={{ duration: 0.3 }}
-                            >
-                                <TabsContent value="overview" className="space-y-6">
-                                    <Overview data={data} />
-                                </TabsContent>
-
-                                <TabsContent value="time-tracking" className="space-y-6">
-                                    <TimeTracking data={data} />
-                                </TabsContent>
-
-                                <TabsContent value="activity" className="space-y-6">
-                                    <ActivityFeed data={data} />
-                                </TabsContent>
-
-                                <TabsContent value="screenshots" className="space-y-6">
-                                    <Screenshots data={data} />
-                                </TabsContent>
-                            </motion.div>
-                        </AnimatePresence>
-                    </Tabs>
-                </motion.div>
-            </motion.div>
+                <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+                    <div className="mx-auto max-w-5xl space-y-6">
+                        <Overview data={data} />
+                        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                            <div className="lg:col-span-3">
+                                <TimeTracking data={data} />
+                            </div>
+                            <div className="lg:col-span-2">
+                                <AppUsagePieChart data={data} />
+                            </div>
+                        </div>
+                        <ActivityHeatmap />
+                        <Screenshots data={data} />
+                    </div>
+                </main>
+            </div>
+            {isTerminalOpen && <LiveTerminal onClose={() => setIsTerminalOpen(false)} />}
         </div>
     );
 } 

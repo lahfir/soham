@@ -2,7 +2,6 @@ use screenshots::Screen;
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use std::{thread, time::Duration, sync::Arc};
-use image;
 
 use crate::{config::Config, db::Db};
 
@@ -31,7 +30,9 @@ impl ScreenshotService {
             .join(Utc::now().format("%Y/%m/%d").to_string());
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{ts}.png"));
+
         image.save(&path)?;
+
         db.insert_screenshot(ts, path.to_string_lossy().as_ref(), screen.display_info.id as i32)?;
         Ok(())
     }

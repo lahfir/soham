@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use crate::{db::Db, config::Config};
 
+#[derive(Clone)]
 /// Global application state shared across threads
 pub struct AppState {
     pub db: Arc<Db>,

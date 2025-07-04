@@ -6,8 +6,6 @@ export interface RealtimeData {
     app_stats: Array<{
         app_id: string;
         total_duration: number;
-        session_count: number;
-        avg_session_duration: number;
     }>;
     daily_stats: Array<{
         date: string;
