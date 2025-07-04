@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Home, BarChart2, Clock, Settings, ChevronsLeft, PanelLeft } from 'lucide-react';
+import { Home, BarChart2, Clock, Settings, ChevronsLeft, PanelLeft, Camera } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -24,6 +24,7 @@ export function Sidebar({ className, isCollapsed, onToggle }: SidebarProps) {
                 <NavItem to="/" icon={Home} label="Overview" isCollapsed={isCollapsed} />
                 <NavItem to="/analytics" icon={BarChart2} label="App Analytics" isCollapsed={isCollapsed} />
                 <NavItem to="/timeline" icon={Clock} label="Timeline" isCollapsed={isCollapsed} />
+                <NavItem to="/screenshots" icon={Camera} label="Screenshots" isCollapsed={isCollapsed} />
             </nav>
 
             <div className="mt-auto p-2 space-y-1 border-t border-border/30">

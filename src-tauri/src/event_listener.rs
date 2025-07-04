@@ -86,9 +86,42 @@ pub fn spawn(app_state: AppState, app_handle: AppHandle) {
                     }
                 }
                 
+                extern "C" fn on_window_minimized(this: &mut Object, _cmd: Sel, notification: id) {
+                    unsafe {
+                        const EVENT_TYPE: &str = "minimize";
+                        handle_window_event(this, notification, EVENT_TYPE);
+                    }
+                }
+
+                extern "C" fn on_window_deminiaturized(this: &mut Object, _cmd: Sel, notification: id) {
+                    unsafe {
+                        const EVENT_TYPE: &str = "maximize";
+                        handle_window_event(this, notification, EVENT_TYPE);
+                    }
+                }
+
+                extern "C" fn on_window_closed(this: &mut Object, _cmd: Sel, notification: id) {
+                    unsafe {
+                        const EVENT_TYPE: &str = "close";
+                        handle_window_event(this, notification, EVENT_TYPE);
+                    }
+                }
+
                 decl.add_method(
                     sel!(onAppActivated:),
                     on_app_activated as extern "C" fn(&mut Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(onWindowMinimized:),
+                    on_window_minimized as extern "C" fn(&mut Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(onWindowDeminiaturized:),
+                    on_window_deminiaturized as extern "C" fn(&mut Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(onWindowClosed:),
+                    on_window_closed as extern "C" fn(&mut Object, Sel, id),
                 );
                 
                 decl.register()
@@ -111,6 +144,31 @@ pub fn spawn(app_state: AppState, app_handle: AppHandle) {
                 addObserver: observer
                 selector: sel!(onAppActivated:)
                 name: notification_name
+                object: nil
+            ];
+            
+            // Listen for window minimize/maximize/close events via default center
+            let default_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let minimize_name = NSString::alloc(nil).init_str("NSWindowDidMiniaturizeNotification");
+            let demini_name = NSString::alloc(nil).init_str("NSWindowDidDeminiaturizeNotification");
+            let close_name = NSString::alloc(nil).init_str("NSWindowWillCloseNotification");
+
+            let _: () = msg_send![default_center,
+                addObserver: observer
+                selector: sel!(onWindowMinimized:)
+                name: minimize_name
+                object: nil
+            ];
+            let _: () = msg_send![default_center,
+                addObserver: observer
+                selector: sel!(onWindowDeminiaturized:)
+                name: demini_name
+                object: nil
+            ];
+            let _: () = msg_send![default_center,
+                addObserver: observer
+                selector: sel!(onWindowClosed:)
+                name: close_name
                 object: nil
             ];
             
@@ -141,4 +199,32 @@ unsafe fn nsstring_to_string_option(ns_string: id) -> Option<String> {
         return None;
     }
     Some(nsstring_to_string(ns_string))
+}
+
+// Helper shared by all window event callbacks.
+unsafe fn handle_window_event(this: &mut Object, notification: id, event_type: &str) {
+    use chrono::Utc;
+    let state_ptr = *this.get_ivar::<*const c_void>("_state") as *const ObserverState;
+    if state_ptr.is_null() { return; }
+    let state = &*state_ptr;
+
+    let window: id = msg_send![notification, object];
+    if window == nil { return; }
+
+    let title_ns: id = msg_send![window, title];
+    let window_title = nsstring_to_string(title_ns);
+
+    let ts = Utc::now().timestamp();
+    let session_id = *state.app_state.current_session.lock().unwrap();
+
+    if let Err(e) = state.app_state.db.insert_window_activity(
+        session_id,
+        ts,
+        event_type,
+        &window_title,
+        "", // app_id not easily available here
+        0,   // pid unknown in this context
+    ) {
+        eprintln!("❌ Failed to log window activity: {}", e);
+    }
 } 

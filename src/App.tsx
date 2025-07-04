@@ -4,6 +4,7 @@ import { Dashboard } from './components/Dashboard';
 import { AppAnalyticsPage } from './pages/AppAnalyticsPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ScreenshotsPage } from './pages/ScreenshotsPage';
 import { ThemeProvider } from "@/lib/theme-provider";
 import './App.css';
 
@@ -17,6 +18,7 @@ function App() {
             <Route path="analytics" element={<AppAnalyticsPage />} />
             <Route path="analytics/:appId" element={<AppAnalyticsPage />} />
             <Route path="timeline" element={<TimelinePage />} />
+            <Route path="screenshots" element={<ScreenshotsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

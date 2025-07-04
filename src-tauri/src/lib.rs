@@ -32,6 +32,14 @@ pub struct AppLifecycleEvent {
 }
 
 #[derive(serde::Serialize, Clone)]
+#[serde(tag = "type", content = "payload")]
+pub enum TimelineEvent {
+    AppTransition { from_app: String, to_app: String, ts: i64, transition_type: String },
+    WindowEvent { event_type: String, window_title: String, app_id: String, ts: i64 },
+    Screenshot { path: String, ts: i64 },
+}
+
+#[derive(serde::Serialize, Clone)]
 pub struct HistoricalEvent {
     ts: i64,
     event_type: String, // e.g., 'activity', 'screenshot', 'app_open', 'app_close'
@@ -160,6 +168,40 @@ fn get_session_flow(app_state: State<AppState>) -> Result<Vec<db::AppLifecycleFl
     app_state.db.get_session_flow(session_id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_unified_timeline_events(from: i64, to: i64, app_state: State<AppState>) -> Result<Vec<TimelineEvent>, String> {
+    app_state.db.get_unified_timeline_events(from, to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_sessions_for_date(date: String, app_state: State<AppState>) -> Result<Vec<db::Session>, String> {
+    app_state.db.get_sessions_for_date(&date).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_unified_timeline_events_for_session(session_id: i64, app_state: State<AppState>) -> Result<Vec<TimelineEvent>, String> {
+    app_state.db.get_unified_timeline_events_for_session(session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_screenshots_in_range(from: i64, to: i64, app_state: State<'_, AppState>) -> Result<Vec<db::Screenshot>, String> {
+    let screenshots = app_state.db.get_screenshots_in_range(from, to).map_err(|e| e.to_string())?;
+
+    let base64_screenshots = tauri::async_runtime::spawn(async move {
+        use base64::engine::Engine;
+        let mut results = Vec::new();
+        for mut shot in screenshots {
+            if let Ok(bytes) = tokio::fs::read(&shot.path).await {
+                shot.path = base64::engine::general_purpose::STANDARD.encode(bytes);
+                results.push(shot);
+            }
+        }
+        results
+    }).await.map_err(|e| e.to_string())?;
+
+    Ok(base64_screenshots)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db = Arc::new(Db::new().expect("db init failed"));
@@ -172,8 +214,6 @@ pub fn run() {
         let mut s = app_state.current_session.lock().unwrap();
         *s = session_id;
     }
-
-    ScreenshotService::spawn(Arc::clone(&db), config.clone());
 
     Builder::default()
         .manage(app_state.clone())
@@ -192,10 +232,19 @@ pub fn run() {
             system_stats::get_system_stats,
             current_session_id,
             get_session_flow,
+            get_unified_timeline_events,
+            get_sessions_for_date,
+            get_unified_timeline_events_for_session,
+            get_screenshots_in_range,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
             let app_state_clone = app_state.clone();
+
+            // Spawn the screenshot daemon with session awareness
+            let db_clone = app_state_clone.db.clone();
+            let session_clone = app_state_clone.current_session.clone();
+            ScreenshotService::spawn(db_clone, session_clone, app_handle.clone(), config.screenshot_interval_secs);
 
             // Spawn the appropriate activity tracker based on the OS
             #[cfg(target_os = "macos")]

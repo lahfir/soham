@@ -50,8 +50,8 @@ function SystemHealthCard({ title, value, icon: Icon, description, trend, accent
 
     return (
         <Card className="border border-border/20 shadow-sm hover:shadow-md transition-all duration-200 bg-card">
-            <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
+            <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-2">
                     <div className={`p-2 rounded-lg border ${accentColor ? accentColors[accentColor] : 'bg-muted/30 border-border/20'}`}>
                         <Icon className="h-4 w-4" />
                     </div>
@@ -61,7 +61,7 @@ function SystemHealthCard({ title, value, icon: Icon, description, trend, accent
                         </Badge>
                     )}
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                     <p className="text-sm font-medium text-muted-foreground">{title}</p>
                     <div className="text-xl font-bold tracking-tight">{value}</div>
                     <p className="text-xs text-muted-foreground/70">{description}</p>
@@ -79,13 +79,13 @@ function MetricCard({ title, value, icon: Icon, description }: {
 }) {
     return (
         <Card className="border border-border/20 shadow-sm hover:shadow-md transition-all duration-200 bg-card">
-            <CardContent className="p-4">
-                <div className="flex items-start justify-between mb-3">
+            <CardContent className="p-3">
+                <div className="flex items-start justify-between mb-2">
                     <div className="p-2 bg-primary/10 border border-primary/20 rounded-lg">
                         <Icon className="h-4 w-4 text-primary" />
                     </div>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                     <p className="text-sm font-medium text-muted-foreground">{title}</p>
                     <div className="text-xl font-bold tracking-tight">{value}</div>
                     <p className="text-xs text-muted-foreground/70">{description}</p>
@@ -338,21 +338,21 @@ export function Dashboard() {
                             <h2 className="text-lg font-semibold">Application Analysis</h2>
                         </div>
                         <div className="grid gap-6 lg:grid-cols-5">
-                            <Card className="col-span-1 lg:col-span-3 border border-border/20 shadow-sm bg-card">
+                            <Card className="col-span-1 lg:col-span-3 border border-border/20 shadow-sm bg-card h-[420px] flex flex-col">
                                 <CardHeader className="pb-3">
                                     <CardTitle className="text-base">Usage Distribution</CardTitle>
                                 </CardHeader>
-                                <CardContent className="pt-0">
+                                <CardContent className="pt-0 flex-1 min-h-0">
                                     <AppUsagePieChart data={data.app_stats} />
                                 </CardContent>
                             </Card>
 
-                            <Card className="col-span-1 lg:col-span-2 border border-border/20 shadow-sm bg-card">
+                            <Card className="col-span-1 lg:col-span-2 border border-border/20 shadow-sm bg-card h-[420px] flex flex-col">
                                 <CardHeader className="pb-3">
                                     <CardTitle className="text-base">Top Applications</CardTitle>
                                 </CardHeader>
-                                <CardContent className="pt-0">
-                                    <ScrollArea className="h-80">
+                                <CardContent className="pt-0 flex-1 min-h-0">
+                                    <ScrollArea className="h-full">
                                         <div className="space-y-2 pr-2">
                                             {data.app_stats.slice(0, 12).map((app, index) => (
                                                 <TopAppCard key={app.app_id} app={app} rank={index + 1} />

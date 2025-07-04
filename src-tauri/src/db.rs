@@ -28,17 +28,34 @@ impl Db {
             .join("db.sqlite")
     }
 
+    /// Adds a column to a table if it does not already exist. This makes migrations idempotent.
+    fn add_column_if_missing(conn: &Connection, table: &str, column: &str, sql_type: &str) -> Result<()> {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?; // Column name is index 1
+            if name == column {
+                return Ok(());
+            }
+        }
+        let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, sql_type);
+        conn.execute(&sql, [])?;
+        Ok(())
+    }
+
     fn init_schema(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS screenshots (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  INTEGER,
                 ts          INTEGER NOT NULL,
                 file_path   TEXT NOT NULL,
                 screen_id   INTEGER
             );
             CREATE TABLE IF NOT EXISTS window_activities (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  INTEGER,
                 ts          INTEGER NOT NULL,
                 event_type  TEXT NOT NULL,
                 window_title TEXT,
@@ -47,6 +64,7 @@ impl Db {
             );
             CREATE TABLE IF NOT EXISTS activity_pulses (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  INTEGER,
                 ts          INTEGER NOT NULL,
                 app_id      TEXT,
                 window_title TEXT,
@@ -70,6 +88,7 @@ impl Db {
             );
             CREATE TABLE IF NOT EXISTS app_transitions (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  INTEGER,
                 ts          INTEGER NOT NULL,
                 from_app_id TEXT NOT NULL,
                 to_app_id   TEXT NOT NULL,
@@ -81,16 +100,13 @@ impl Db {
                 end_ts      INTEGER
             );
             DROP TABLE IF EXISTS time_logs;
-            /* Attempt to add session_id columns if they don't exist */
-            PRAGMA foreign_keys = OFF;
-            BEGIN TRANSACTION;
-            ALTER TABLE activity_pulses ADD COLUMN session_id INTEGER;
-            ALTER TABLE app_transitions ADD COLUMN session_id INTEGER;
-            ALTER TABLE window_activities ADD COLUMN session_id INTEGER;
-            COMMIT;
-            PRAGMA foreign_keys = ON;
         "#,
         )?;
+
+        Self::add_column_if_missing(conn, "activity_pulses", "session_id", "INTEGER")?;
+        Self::add_column_if_missing(conn, "app_transitions", "session_id", "INTEGER")?;
+        Self::add_column_if_missing(conn, "window_activities", "session_id", "INTEGER")?;
+        Self::add_column_if_missing(conn, "screenshots", "session_id", "INTEGER")?;
         Ok(())
     }
 
@@ -166,9 +182,19 @@ impl Db {
         Ok(())
     }
 
+    /// Inserts a screenshot record that belongs to a specific session.
+    pub fn insert_screenshot_with_session(&self, session_id: i64, ts: i64, path: &str, screen_id: i32) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO screenshots(session_id, ts, file_path, screen_id) VALUES(?1, ?2, ?3, ?4)",
+            params![session_id, ts, path, screen_id],
+        )?;
+        Ok(())
+    }
+
     pub fn recent_screenshots(&self, limit: u32) -> Result<Vec<Screenshot>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT path, ts FROM screenshots ORDER BY ts DESC LIMIT ?1")?;
+        let mut stmt = conn.prepare("SELECT file_path, ts FROM screenshots ORDER BY ts DESC LIMIT ?1")?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok(Screenshot {
                 path: row.get(0)?,
@@ -398,12 +424,199 @@ impl Db {
         }
         Ok(v)
     }
+
+    pub fn get_unified_timeline_events(&self, start_ts: i64, end_ts: i64) -> Result<Vec<crate::TimelineEvent>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "
+            SELECT
+                'transition' as event_type,
+                ts,
+                from_app_id,
+                to_app_id,
+                NULL as window_title,
+                NULL as app_id,
+                NULL as file_path,
+                transition_type
+            FROM app_transitions
+            WHERE ts BETWEEN ?1 AND ?2
+            UNION ALL
+            SELECT
+                event_type,
+                ts,
+                NULL as from_app_id,
+                NULL as to_app_id,
+                window_title,
+                app_id,
+                NULL as file_path,
+                NULL as transition_type
+            FROM window_activities
+            WHERE ts BETWEEN ?1 AND ?2
+            UNION ALL
+            SELECT
+                'screenshot' as event_type,
+                ts,
+                NULL as from_app_id,
+                NULL as to_app_id,
+                NULL as window_title,
+                NULL as app_id,
+                file_path,
+                NULL as transition_type
+            FROM screenshots
+            WHERE ts BETWEEN ?1 AND ?2
+            ORDER BY ts DESC
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![start_ts, end_ts], |row| {
+            let event_type: String = row.get(0)?;
+            let ts: i64 = row.get(1)?;
+
+            match event_type.as_str() {
+                "transition" => Ok(crate::TimelineEvent::AppTransition {
+                    ts,
+                    from_app: row.get(2)?,
+                    to_app: row.get(3)?,
+                    transition_type: row.get(7)?,
+                }),
+                "screenshot" => Ok(crate::TimelineEvent::Screenshot {
+                    ts,
+                    path: row.get(6)?,
+                }),
+                _ => Ok(crate::TimelineEvent::WindowEvent { // Covers minimize, maximize, close
+                    ts,
+                    event_type,
+                    window_title: row.get(4).unwrap_or_default(),
+                    app_id: row.get(5).unwrap_or_default(),
+                }),
+            }
+        })?;
+
+        let mut events = Vec::new();
+        for event in rows {
+            events.push(event?);
+        }
+        Ok(events)
+    }
+
+    pub fn get_screenshots_in_range(&self, start_ts: i64, end_ts: i64) -> Result<Vec<Screenshot>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT file_path, ts FROM screenshots WHERE ts BETWEEN ?1 AND ?2 ORDER BY ts DESC",
+        )?;
+        let rows = stmt.query_map(params![start_ts, end_ts], |row| {
+            Ok(Screenshot {
+                path: row.get(0)?,
+                ts: row.get(1)?,
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        Ok(v)
+    }
+
+    /// Returns all sessions that started on a given date (YYYY-MM-DD).
+    pub fn get_sessions_for_date(&self, date: &str) -> Result<Vec<Session>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, start_ts, end_ts FROM sessions WHERE date(start_ts, 'unixepoch') = ?1 ORDER BY start_ts" ,
+        )?;
+        let rows = stmt.query_map(params![date], |row| {
+            Ok(Session {
+                id: row.get(0)?,
+                start_ts: row.get(1)?,
+                end_ts: row.get(2)?,
+            })
+        })?;
+        let mut v = Vec::new();
+        for r in rows { v.push(r?); }
+        Ok(v)
+    }
+
+    /// Unified timeline events limited to a specific session id.
+    pub fn get_unified_timeline_events_for_session(&self, session_id: i64) -> Result<Vec<crate::TimelineEvent>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "
+            SELECT
+                'transition' as event_type,
+                ts,
+                from_app_id,
+                to_app_id,
+                NULL as window_title,
+                NULL as app_id,
+                NULL as file_path,
+                transition_type
+            FROM app_transitions
+            WHERE session_id = ?1
+            UNION ALL
+            SELECT
+                event_type,
+                ts,
+                NULL, NULL,
+                window_title,
+                app_id,
+                NULL,
+                NULL
+            FROM window_activities
+            WHERE session_id = ?1
+            UNION ALL
+            SELECT
+                'screenshot' as event_type,
+                ts,
+                NULL, NULL,
+                NULL, NULL,
+                file_path,
+                NULL
+            FROM screenshots
+            WHERE session_id = ?1
+            ORDER BY ts DESC
+            "
+        )?;
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            let event_type: String = row.get(0)?;
+            let ts: i64 = row.get(1)?;
+
+            match event_type.as_str() {
+                "transition" => Ok(crate::TimelineEvent::AppTransition {
+                    ts,
+                    from_app: row.get(2)?,
+                    to_app: row.get(3)?,
+                    transition_type: row.get(7)?,
+                }),
+                "screenshot" => Ok(crate::TimelineEvent::Screenshot {
+                    ts,
+                    path: row.get(6)?,
+                }),
+                _ => Ok(crate::TimelineEvent::WindowEvent {
+                    ts,
+                    event_type,
+                    window_title: row.get(4).unwrap_or_default(),
+                    app_id: row.get(5).unwrap_or_default(),
+                }),
+            }
+        })?;
+
+        let mut events = Vec::new();
+        for event in rows { events.push(event?); }
+        Ok(events)
+    }
 }
 
 #[derive(serde::Serialize)]
 pub struct Screenshot {
     pub path: String,
     pub ts: i64,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct Session {
+    pub id: i64,
+    pub start_ts: i64,
+    pub end_ts: Option<i64>,
 }
 
 #[derive(serde::Serialize)]

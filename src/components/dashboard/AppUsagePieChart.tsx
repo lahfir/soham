@@ -1,6 +1,7 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { AppStat } from '@/types/dashboard';
 import { AppIcon } from './AppIcon';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface AppUsagePieChartProps {
     data: AppStat[];
@@ -21,8 +22,6 @@ function formatDuration(seconds: number): string {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
 }
-
-
 
 function generateAppColor(appName: string): string {
     const colors = [
@@ -131,30 +130,49 @@ export function AppUsagePieChart({ data }: AppUsagePieChartProps) {
     }
 
     return (
-        <div className="w-full h-64">
-            <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                    <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={50}
-                        outerRadius={100}
-                        paddingAngle={1}
-                        dataKey="value"
-                        stroke="none"
-                    >
-                        {pieData.map((entry, index) => (
-                            <Cell
-                                key={`cell-${index}`}
-                                fill={entry.color}
-                                className="hover:opacity-80 transition-opacity duration-200 cursor-pointer"
-                            />
-                        ))}
-                    </Pie>
-                    <Tooltip content={<CustomTooltip />} />
-                </PieChart>
-            </ResponsiveContainer>
+        <div className="flex flex-col lg:flex-row h-full w-full gap-6 items-center justify-center">
+            <div className="flex-1 h-[260px] lg:h-full flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                        <Pie
+                            data={pieData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={80}
+                            outerRadius={140}
+                            paddingAngle={1}
+                            dataKey="value"
+                            stroke="none"
+                        >
+                            {pieData.map((entry, index) => (
+                                <Cell
+                                    key={`cell-${index}`}
+                                    fill={entry.color}
+                                    className="hover:opacity-80 transition-opacity duration-200 cursor-pointer"
+                                />
+                            ))}
+                        </Pie>
+                        <Tooltip content={<CustomTooltip />} />
+                    </PieChart>
+                </ResponsiveContainer>
+            </div>
+            <ScrollArea className="w-64 max-w-[45%] h-full">
+                <div className="grid grid-cols-2 gap-4 pr-3">
+                    {pieData.map((entry, index) => (
+                        <div key={index} className="flex items-center gap-2 text-sm text-foreground/90 truncate">
+                            <div className="relative">
+                                <AppIcon appId={entry.name} className="h-8 w-8 rounded-sm flex-shrink-0" />
+                                <div
+                                    className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-background"
+                                    style={{ backgroundColor: entry.color }}
+                                />
+                            </div>
+                            <span className="truncate flex-1" title={entry.name}>{entry.name}</span>
+                            <span className="text-xs text-muted-foreground">{entry.percentage.toFixed(0)}%</span>
+                        </div>
+                    ))}
+                </div>
+            </ScrollArea>
         </div>
     );
 } 
