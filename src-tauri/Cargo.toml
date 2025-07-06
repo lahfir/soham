@@ -46,6 +46,7 @@ cocoa = "0.25"
 objc = "0.2.7"
 moka = { version = "0.12", features = ["future"] }
 uuid = { version = "1.0", features = ["v4"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55.0"

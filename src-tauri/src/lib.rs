@@ -26,6 +26,9 @@ pub fn run() {
             commands::pause,
             commands::resume,
             commands::status,
+            commands::is_app_ready,
+            commands::refresh_webview,
+            commands::get_memory_usage,
             commands::get_dashboard_data,
             commands::get_heatmap_data,
             commands::get_app_icon,
@@ -82,7 +85,7 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-async fn initialize_app(app_handle: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn initialize_app_state() -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
     log::info!("📋 Loading configuration...");
     let config = Config::load()?;
     log::info!("✅ Configuration loaded");
@@ -106,10 +109,16 @@ async fn initialize_app(app_handle: tauri::AppHandle) -> Result<(), Box<dyn std:
     app_state.set_current_session_id(session_id).await;
     log::info!("✅ Session created with ID: {}", session_id);
 
-    // Manage the app state
-    app_handle.manage(app_state.clone());
-    log::info!("✅ Application state managed");
+    Ok(app_state)
+}
 
+async fn start_background_services(
+    app_handle: tauri::AppHandle,
+    app_state: AppState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    log::info!("📋 Loading configuration for services...");
+    let config = Config::load()?;
+    
     log::info!("🔄 Starting background services...");
     
     // Start screenshot service
@@ -156,24 +165,75 @@ fn get_database_path() -> Result<String, Box<dyn std::error::Error + Send + Sync
 fn request_macos_permissions() {
     use std::process::Command;
     
-    log::info!("🔐 Requesting macOS permissions...");
+    log::info!("🔐 Checking macOS permissions...");
     
-    // Request accessibility permissions through AppleScript
-    let script = r#"
+    // Check if accessibility permissions are already granted
+    let check_script = r#"
     tell application "System Events"
         try
             get processes
-            display dialog "Soham Tracker needs accessibility permissions to monitor applications and extract icons. Please grant access in System Preferences > Security & Privacy > Privacy > Accessibility." buttons {"OK"} default button "OK"
+            return true
         on error
-            display dialog "Please grant Soham Tracker accessibility permissions in System Preferences > Security & Privacy > Privacy > Accessibility, then restart the app." buttons {"OK"} default button "OK"
+            return false
+        end try
+    end tell
+    "#;
+    
+    let check_result = Command::new("osascript")
+        .arg("-e")
+        .arg(check_script)
+        .output();
+    
+    let has_permissions = check_result
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "true")
+        .unwrap_or(false);
+    
+    if has_permissions {
+        log::info!("✅ Accessibility permissions already granted");
+        return;
+    }
+    
+    log::warn!("⚠️ Accessibility permissions not granted, requesting...");
+    
+    // Request accessibility permissions and open system preferences
+    let request_script = r#"
+    tell application "System Events"
+        try
+            -- This will trigger the permission dialog
+            get processes
+        on error
+            -- Open System Preferences to the correct page
+            tell application "System Preferences"
+                activate
+                set current pane to pane "com.apple.preference.security"
+                delay 1
+                tell application "System Events"
+                    tell process "System Preferences"
+                        try
+                            click button "Privacy" of tab group 1 of window 1
+                            delay 0.5
+                            click row 2 of table 1 of scroll area 1 of group 1 of tab group 1 of window 1
+                        end try
+                    end tell
+                end tell
+            end tell
+            
+            display dialog "Soham Tracker needs Accessibility permissions to monitor applications and extract icons.
+
+1. In the opened System Preferences window, click on 'Accessibility' in the left panel
+2. Click the lock icon and enter your password if needed  
+3. Check the box next to 'soham' to grant permissions
+4. Restart the application after granting permissions
+
+The app will not function properly without these permissions." buttons {"OK"} default button "OK" with title "Accessibility Permissions Required"
         end try
     end tell
     "#;
     
     let _ = Command::new("osascript")
         .arg("-e")
-        .arg(script)
+        .arg(request_script)
         .output();
     
-    log::info!("✅ Permission request completed");
+    log::info!("✅ Permission request dialog completed");
 }

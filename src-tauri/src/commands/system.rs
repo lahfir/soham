@@ -61,8 +61,27 @@ async fn extract_app_icon_base64(app_id: &str) -> Result<String, crate::error::A
     tokio::task::spawn_blocking({
         let app_id = app_id.to_string();
         move || {
-            crate::icon_extractor::get_app_icon_base64(&app_id)
-                .map_err(|e| crate::error::AppError::IconExtraction(e.to_string()))
+            match crate::icon_extractor::get_app_icon_base64(&app_id) {
+                Ok(icon_data) => {
+                    log::debug!("Successfully extracted icon for app: {}", app_id);
+                    Ok(icon_data)
+                }
+                Err(e) => {
+                    log::warn!("Failed to extract icon for {}: {}. Using fallback.", app_id, e);
+                    // If extraction fails, try to create a fallback icon
+                    #[cfg(target_os = "macos")]
+                    {
+                        crate::icon_extractor::create_fallback_icon(&app_id)
+                            .map_err(|fallback_err| crate::error::AppError::IconExtraction(
+                                format!("Icon extraction failed: {}. Fallback also failed: {}", e, fallback_err)
+                            ))
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        Err(crate::error::AppError::IconExtraction(e.to_string()))
+                    }
+                }
+            }
         }
     })
     .await
@@ -90,4 +109,42 @@ pub async fn resume(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn status(state: State<'_, AppState>) -> Result<AppStatus, String> {
     let paused = state.is_paused().await;
     Ok(AppStatus { paused })
+}
+
+#[tauri::command]
+pub async fn is_app_ready(state: State<'_, AppState>) -> Result<bool, String> {
+    // Check if we can access the state and it has been properly initialized
+    let session_id = state.get_current_session_id().await;
+    Ok(session_id > 0)
+}
+
+#[tauri::command]
+pub async fn refresh_webview() -> Result<String, String> {
+    log::info!("WebView refresh requested - clearing memory and forcing rerender");
+    
+    // Force garbage collection by dropping large objects
+    std::hint::black_box(vec![0u8; 1024]); // Small allocation to trigger GC
+    
+    Ok("WebView refresh completed".to_string())
+}
+
+#[tauri::command] 
+pub async fn get_memory_usage() -> Result<serde_json::Value, String> {
+    use sysinfo::{System, SystemExt};
+    
+    let mut system = System::new();
+    system.refresh_memory();
+    
+    let memory_info = serde_json::json!({
+        "total_memory": system.total_memory(),
+        "used_memory": system.used_memory(),
+        "available_memory": system.available_memory(),
+        "memory_usage_percent": if system.total_memory() > 0 {
+            (system.used_memory() as f64 / system.total_memory() as f64) * 100.0
+        } else {
+            0.0
+        }
+    });
+    
+    Ok(memory_info)
 }

@@ -31,6 +31,12 @@ pub enum AppError {
     
     #[error("Not found: {0}")]
     NotFound(String),
+    
+    #[error("File IO error: {0}")]
+    FileIO(String),
+    
+    #[error("Image processing error: {0}")]
+    ImageProcessing(String),
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;
