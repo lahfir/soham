@@ -9,15 +9,6 @@ export interface Screenshot {
     ts: number;
 }
 
-// Note: We need a command to fetch screenshots by date range.
-// Let's assume `get_screenshots_for_date` exists for now.
-const fetchScreenshotsByDate = async (date: Date): Promise<Screenshot[]> => {
-    const from = Math.floor(startOfDay(date).getTime() / 1000);
-    const to = Math.floor(endOfDay(date).getTime() / 1000);
-    // This command needs to be created in the Rust backend.
-    // It would query the screenshots table with a WHERE clause on the `ts` field.
-    return invoke("get_screenshots_in_range", { from, to });
-};
 
 export const useScreenshots = (date: Date) => {
     const [screenshots, setScreenshots] = useState<Screenshot[]>([]);

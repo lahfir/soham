@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm run tauri:*)",
+      "Bash(rm:*)",
+      "Bash(cargo check:*)",
+      "Bash(ls:*)",
+      "Bash(timeout 15s npm run tauri dev)",
+      "Bash(cargo build:*)",
+      "Bash(pkill:*)",
+      "Bash(true)",
+      "Bash(timeout 15 npm run tauri dev)",
+      "Bash(cargo run:*)",
+      "Bash(RUST_LOG=info timeout 30 cargo run --release)",
+      "Bash(RUST_LOG=info cargo run --release)",
+      "Bash(RUST_LOG=info cargo run --release --manifest-path src-tauri/Cargo.toml)",
+      "Bash(RUST_LOG=debug ./target/debug/soham)",
+      "Bash(grep:*)",
+      "Bash(RUST_LOG=info ./target/debug/soham)",
+      "Bash(timeout:*)",
+      "Bash(find:*)",
+      "Bash(RUST_LOG=debug timeout 12 ./target/debug/soham)",
+      "Bash(cargo clean:*)"
+    ],
+    "deny": []
+  }
+}
